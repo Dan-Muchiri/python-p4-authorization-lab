@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-
-from flask import Flask, make_response, jsonify, request, session
+from flask import Flask, make_response, jsonify, request, session, abort
 from flask_migrate import Migrate
 from flask_restful import Api, Resource
 
@@ -21,10 +19,7 @@ api = Api(app)
 class ClearSession(Resource):
 
     def delete(self):
-    
-        session['page_views'] = None
-        session['user_id'] = None
-
+        session.clear()
         return {}, 204
 
 class IndexArticle(Resource):
@@ -38,6 +33,9 @@ class ShowArticle(Resource):
     def get(self, id):
 
         article = Article.query.filter(Article.id == id).first()
+        if not article:
+            abort(404)
+
         article_json = article.to_dict()
 
         if not session.get('user_id'):
@@ -47,7 +45,7 @@ class ShowArticle(Resource):
             if session['page_views'] <= 3:
                 return article_json, 200
 
-            return {'message': 'Maximum pageview limit reached'}, 401
+            abort(401)
 
         return article_json, 200
 
@@ -63,36 +61,51 @@ class Login(Resource):
             session['user_id'] = user.id
             return user.to_dict(), 200
 
-        return {}, 401
+        abort(401)
 
 class Logout(Resource):
 
     def delete(self):
-
-        session['user_id'] = None
-        
+        session.pop('user_id', None)
         return {}, 204
 
 class CheckSession(Resource):
 
     def get(self):
-        
-        user_id = session['user_id']
+        user_id = session.get('user_id')
         if user_id:
             user = User.query.filter(User.id == user_id).first()
             return user.to_dict(), 200
-        
-        return {}, 401
+        abort(401)
 
 class MemberOnlyIndex(Resource):
-    
     def get(self):
-        pass
+        if 'user_id' not in session:
+            abort(401)
+        
+        member_only_articles = [article.to_dict() for article in Article.query.filter_by(is_member_only=True).all()]
+        return member_only_articles, 200
 
 class MemberOnlyArticle(Resource):
-    
     def get(self, id):
-        pass
+        if 'user_id' not in session:
+            abort(401)
+        
+        article = Article.query.filter(Article.id == id).first()
+        if not article:
+            abort(404)
+
+        if not article.is_member_only:
+            print("Requested article ID:", id)
+            print("Article object:", article)
+            abort(401)
+
+        return article.to_dict(), 200
+
+
+
+
+
 
 api.add_resource(ClearSession, '/clear', endpoint='clear')
 api.add_resource(IndexArticle, '/articles', endpoint='article_list')
@@ -102,7 +115,6 @@ api.add_resource(Logout, '/logout', endpoint='logout')
 api.add_resource(CheckSession, '/check_session', endpoint='check_session')
 api.add_resource(MemberOnlyIndex, '/members_only_articles', endpoint='member_index')
 api.add_resource(MemberOnlyArticle, '/members_only_articles/<int:id>', endpoint='member_article')
-
 
 if __name__ == '__main__':
     app.run(port=5555, debug=True)
